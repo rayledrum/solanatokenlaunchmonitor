@@ -1,6 +1,5 @@
 {
   "wallets": [
-    { "nickname": "niggard5", "address": "niggerd597QYedtvjQDVHZTCCGyJrwHNm2i49dkm5zS" },
-    { "nickname": "dev2", "address": "AbCdEf1234567890123456789012345678901234567890" }
+    { "nickname": "wallet_axm", "address": "niggerd597QYedtvjQDVHZTCCGyJrwHNm2i49dkm5zS" }
   ]
 }

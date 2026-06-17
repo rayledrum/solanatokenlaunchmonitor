@@ -93,12 +93,15 @@ export function showWalletSelector(
       checked.fill(false);
       updateItems();
     });
-    list.key('enter', () => {
+    function doSubmit(): void {
       const selected = wallets.filter((_, i) => checked[i]);
       if (selected.length === 0) return;
       screen.destroy();
       resolve(selected);
-    });
+    }
+
+    list.key(['enter', 'return', 'C-m'], doSubmit);
+    screen.key(['enter', 'return', 'C-m'], doSubmit);
     list.key(['q', 'Q', 'C-c'], () => {
       process.exit(0);
     });

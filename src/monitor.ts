@@ -7,6 +7,7 @@ import {
 const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 const SYSTEM_PROGRAM_ID = '11111111111111111111111111111111';
+const METADATA_PROGRAM_ID = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s';
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
 const KNOWN_LAUNCHPADS = [
@@ -23,6 +24,8 @@ export interface TxEvent {
   slot: number;
   wallet: string;
   mintAddress?: string;
+  tokenName?: string;
+  tokenSymbol?: string;
   tokenProgram?: string;
   platform?: string;
   details?: string;
@@ -146,6 +149,38 @@ export class SolanaMonitor {
     this.emitStatus('connected');
   }
 
+  private async fetchTokenMetadata(
+    mintAddress: string
+  ): Promise<{ name: string; symbol: string } | null> {
+    try {
+      const mint = new PublicKey(mintAddress);
+      const metadataPda = PublicKey.findProgramAddressSync(
+        [Buffer.from('metadata'), new PublicKey(METADATA_PROGRAM_ID).toBuffer(), mint.toBuffer()],
+        new PublicKey(METADATA_PROGRAM_ID)
+      )[0];
+
+      const accountInfo = await this.connection.getAccountInfo(metadataPda);
+      if (!accountInfo || !accountInfo.data) return null;
+
+      const data = accountInfo.data;
+      let offset = 1 + 32 + 32;
+
+      function readString(): string {
+        const len = data.readUInt32LE(offset);
+        offset += 4;
+        const str = data.subarray(offset, offset + len).toString('utf8');
+        offset += len;
+        return str;
+      }
+
+      const name = readString();
+      const symbol = readString();
+      return { name: name.replace(/\0/g, '').trim(), symbol: symbol.replace(/\0/g, '').trim() };
+    } catch {
+      return null;
+    }
+  }
+
   private async enrichCreateEvent(
     base: TxEvent,
     logs: string[]
@@ -159,11 +194,19 @@ export class SolanaMonitor {
 
     const mintAddress = this.extractMintAddress(tx);
 
+    if (!mintAddress) return base;
+
+    const meta = await this.fetchTokenMetadata(mintAddress);
+    const symbolStr = meta ? `${meta.symbol}` : '';
+    const nameStr = meta ? `${meta.name}` : '';
+
     return {
       ...base,
-      mintAddress: mintAddress ?? undefined,
-      tokenProgram: mintAddress ? this.detectTokenProgram(tx) : undefined,
-      details: mintAddress ? `Token: ${mintAddress.slice(0, 8)}...` : undefined,
+      mintAddress,
+      tokenName: meta?.name,
+      tokenSymbol: meta?.symbol,
+      tokenProgram: this.detectTokenProgram(tx),
+      details: meta ? `${meta.symbol}` : mintAddress.slice(0, 8) + '...',
     };
   }
 

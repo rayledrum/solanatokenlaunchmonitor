@@ -88,6 +88,8 @@ Looks for config files at `./wallets.json`, `~/.config/solana-wallet-monitor/wal
 
 ## Output
 
+New coin creations show the **ticker symbol** (e.g., `$MYCOIN`) fetched from the Metaplex metadata account. If metadata isn't available yet, it falls back to the mint address.
+
 Each transaction is color-coded by type:
 
 | Color  | Type       | Description                         |

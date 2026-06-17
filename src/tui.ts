@@ -122,7 +122,9 @@ export class TUI {
     const platform = event.platform ? ` {magenta-fg}[${event.platform}]{/magenta-fg}` : '';
 
     let extra = '';
-    if (event.mintAddress) {
+    if (event.tokenSymbol) {
+      extra = ` {white-fg}$${event.tokenSymbol}{/white-fg}`;
+    } else if (event.mintAddress) {
       extra = ` {white-fg}Token:{/white-fg} ${event.mintAddress}`;
     }
 

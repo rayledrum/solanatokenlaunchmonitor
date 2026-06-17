@@ -63,12 +63,8 @@ async function main() {
       tui.updateStatus(status, message ? `${addr.slice(0, 8)}: ${message}` : undefined);
     });
 
-    monitor.onTxProcessed(() => {
-      tui.onTxProcessed();
-    });
-
-    monitor.onCoinCreated((event) => {
-      tui.onCoinCreated(event);
+    monitor.onTx((event) => {
+      tui.onTx(event);
     });
 
     monitor.start().catch((err: any) => {

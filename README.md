@@ -1,14 +1,14 @@
 # Solana Token Launch Monitor
 
-Real-time CLI tool that monitors Solana wallet addresses for new token creations. Detects when a dev wallet creates a new coin on pump.fun, Moonshot, or any other launchpad, and displays alerts in a terminal dashboard.
+Real-time CLI tool that monitors Solana wallet addresses for all transactions — buys, sells, token creations, and transfers — color-coded in a terminal dashboard.
 
 ## How It Works
 
 1. Connects to Solana via WebSocket (`logsSubscribe`)
 2. Streams all log messages from the monitored wallets in real-time
-3. Scans for `InitializeMint` instructions (Token Program CPI) and known launchpad program invocations
-4. Fetches the transaction to extract the new mint address and platform
-5. Displays in a live terminal UI
+3. Classifies each transaction by type using log patterns and program invocations
+4. Fetches full transaction details only for token creations (to extract the mint address)
+5. Displays in a live terminal UI with color-coded entries
 
 Detection works across all platforms that create SPL tokens (pump.fun, Moonshot, Bonk.fun, direct token creation, etc.) because they all ultimately invoke the Token Program's `InitializeMint` instruction via CPI.
 
@@ -57,13 +57,21 @@ node dist/index.js addr1,addr2 https://api.mainnet-beta.solana.com
 
 ## Output
 
-Each detected coin creation shows:
-- **Time** of detection
-- **Wallet** tag that created it (when monitoring multiple)
-- **Platform** tag (pump.fun, Moonshot, or unknown)
-- **Mint address** of the new token
-- **Token Program** used (Token or Token2022)
-- **Slot** number
+Each transaction is color-coded by type:
+
+| Color  | Type       | Description                         |
+|--------|------------|-------------------------------------|
+| Green  | `BUY`      | Token purchase / swap in            |
+| Red    | `SELL`     | Token sale / swap out               |
+| White  | `CREATE`   | New token mint detected + address   |
+| Blue   | `TRANSFER` | SOL or SPL token transfer           |
+| Yellow | `TX`       | Unclassified transaction            |
+
+The status bar shows running counts for each type.
+
+## Transaction Classification
+
+Classification is done entirely from log messages — no full transaction fetch for buys/sells/transfers (only creations fetch the full tx to extract the mint address). This keeps the tool fast even on high-volume wallets.
 
 ## Configuration
 

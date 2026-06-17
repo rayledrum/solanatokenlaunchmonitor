@@ -1,9 +1,12 @@
 import * as blessed from 'blessed';
-import { NewCoinEvent, MonitorStatus } from './monitor';
+import { TxEvent, MonitorStatus, TxType } from './monitor';
 
-const TOKEN_KNOWN_PROGRAMS: Record<string, string> = {
-  TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: 'Token',
-  TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb: 'Token2022',
+const TYPE_STYLE: Record<TxType, { fg: string; label: string }> = {
+  create:   { fg: 'white',    label: 'CREATE' },
+  buy:      { fg: 'green',    label: 'BUY' },
+  sell:     { fg: 'red',      label: 'SELL' },
+  transfer: { fg: 'blue',     label: 'TRANSFER' },
+  unknown:  { fg: 'yellow',   label: 'TX' },
 };
 
 function shorten(addr: string): string {
@@ -15,8 +18,7 @@ export class TUI {
   private titleBox: blessed.Widgets.BoxElement;
   private logBox: blessed.Widgets.Log;
   private statsBox: blessed.Widgets.BoxElement;
-  private eventCount = 0;
-  private txCount = 0;
+  private counts: Record<TxType, number> = { create: 0, buy: 0, sell: 0, transfer: 0, unknown: 0 };
   private walletCount: number;
 
   constructor(wallets: string[]) {
@@ -52,7 +54,7 @@ export class TUI {
       left: 0,
       width: '100%',
       height: 3,
-      content: ` {bold}Status:{/bold} connecting...  |  Txs: 0  |  New Coins: 0  |  Wallets: ${wallets.length}  |  Press {yellow-fg}q{/yellow-fg} to quit`,
+      content: this.formatStats('connecting...'),
       tags: true,
       style: { fg: 'white', bg: 'black' },
       border: { type: 'line' },
@@ -67,7 +69,7 @@ export class TUI {
       content: '',
       tags: true,
       border: { type: 'line' },
-      label: ' Coin Creation Log ',
+      label: ' Transaction Log ',
       scrollable: true,
       alwaysScroll: true,
       scrollbar: { ch: ' ', track: { bg: 'grey' }, style: { bg: 'white' } },
@@ -78,49 +80,52 @@ export class TUI {
     this.screen.render();
   }
 
+  private formatStats(status: string): string {
+    const parts = [
+      `{bold}Status:{/bold} ${status}`,
+      `{green-fg}Buys:{/green-fg} ${this.counts.buy}`,
+      `{red-fg}Sells:{/red-fg} ${this.counts.sell}`,
+      `{white-fg}Creates:{/white-fg} ${this.counts.create}`,
+      `{blue-fg}Txfr:{/blue-fg} ${this.counts.transfer}`,
+      `Wallets: ${this.walletCount}`,
+      `Press {yellow-fg}q{/yellow-fg} to quit`,
+    ];
+    return ' ' + parts.join('  |  ');
+  }
+
+  private renderStats(): void {
+    this.statsBox.setContent(this.formatStats('connected'));
+    this.screen.render();
+  }
+
   updateStatus(status: MonitorStatus, message?: string): void {
-    const colors: Record<MonitorStatus, string> = {
-      connecting: '{yellow-fg}',
-      connected: '{green-fg}',
-      error: '{red-fg}',
-      disconnected: '{red-fg}',
-    };
-    const color = colors[status] || '{white-fg}';
-    this.statsBox.setContent(
-      ` {bold}Status:{/bold} ${color}${status}{/color}  |  Txs: ${this.txCount}  |  New Coins: ${this.eventCount}  |  Wallets: ${this.walletCount}  |  ${message || ''}  |  Press {yellow-fg}q{/yellow-fg} to quit`
-    );
+    this.statsBox.setContent(this.formatStats(status));
     this.screen.render();
   }
 
-  onTxProcessed(): void {
-    this.txCount++;
-    this.statsBox.setContent(
-      this.statsBox.content.replace(/Txs: \d+/, `Txs: ${this.txCount}`)
-    );
-    this.screen.render();
-  }
+  onTx(event: TxEvent): void {
+    this.counts[event.type]++;
 
-  onCoinCreated(event: NewCoinEvent): void {
-    this.eventCount++;
-    const progName = TOKEN_KNOWN_PROGRAMS[event.tokenProgram] || event.tokenProgram.slice(0, 8) + '...';
-    const platform = event.platform ? ` {magenta-fg}[${event.platform}]{/magenta-fg}` : '';
+    const style = TYPE_STYLE[event.type];
+    const tag = `{${style.fg}-fg}[${style.label}]{/${style.fg}-fg}`;
     const walletTag = ` {blue-fg}[${shorten(event.wallet)}]{/blue-fg}`;
+    const platform = event.platform ? ` {magenta-fg}[${event.platform}]{/magenta-fg}` : '';
+
+    let extra = '';
+    if (event.mintAddress) {
+      extra = ` {white-fg}Token:{/white-fg} ${event.mintAddress}`;
+    }
 
     const entry =
       `{bold}{green-fg}[${event.timestamp.toLocaleTimeString()}]{/green-fg}{/bold}` +
       walletTag +
+      ` ${tag}` +
       platform +
-      ` {cyan-fg}[NEW COIN]{/cyan-fg} ` +
-      `{yellow-fg}Mint:{/yellow-fg} ${event.mintAddress} ` +
-      `{yellow-fg}Prog:{/yellow-fg} ${progName} ` +
-      `{yellow-fg}Slot:{/yellow-fg} ${event.slot}`;
+      extra;
 
     this.logBox.add(entry);
-    this.statsBox.setContent(
-      this.statsBox.content.replace(/New Coins: \d+/, `New Coins: ${this.eventCount}`)
-    );
     this.logBox.setScrollPerc(100);
-    this.screen.render();
+    this.renderStats();
   }
 
   onError(error: string): void {

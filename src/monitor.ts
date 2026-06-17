@@ -6,6 +6,7 @@ import {
 
 const TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const TOKEN_2022_PROGRAM_ID = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
+const SYSTEM_PROGRAM_ID = '11111111111111111111111111111111';
 const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
 const KNOWN_LAUNCHPADS = [
@@ -13,17 +14,64 @@ const KNOWN_LAUNCHPADS = [
   { id: 'MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG', name: 'Moonshot' },
 ] as const;
 
-export interface NewCoinEvent {
+export type TxType = 'create' | 'buy' | 'sell' | 'transfer' | 'unknown';
+
+export interface TxEvent {
+  type: TxType;
   timestamp: Date;
   txSignature: string;
-  mintAddress: string;
-  tokenProgram: string;
   slot: number;
-  platform?: string;
   wallet: string;
+  mintAddress?: string;
+  tokenProgram?: string;
+  platform?: string;
+  details?: string;
 }
 
 export type MonitorStatus = 'connecting' | 'connected' | 'error' | 'disconnected';
+
+function classifyTxType(logs: string[]): { type: TxType; platform?: string } {
+  const joined = logs.join(' ');
+
+  for (const lp of KNOWN_LAUNCHPADS) {
+    const inLaunchpad = logs.some((l) => l.includes(lp.id) && l.includes('invoke'));
+    if (!inLaunchpad) continue;
+
+    const lowerJoined = joined.toLowerCase();
+    if (lowerJoined.includes('initializemint') || lowerJoined.includes('initialize_mint')) {
+      return { type: 'create', platform: lp.name };
+    }
+    if (lowerJoined.includes('instruction: buy') || lowerJoined.includes('"buy"')) {
+      return { type: 'buy', platform: lp.name };
+    }
+    if (lowerJoined.includes('instruction: sell') || lowerJoined.includes('"sell"')) {
+      return { type: 'sell', platform: lp.name };
+    }
+    if (lowerJoined.includes('create') || lowerJoined.includes('tokenmint')) {
+      return { type: 'create', platform: lp.name };
+    }
+  }
+
+  if (joined.includes('InitializeMint') || joined.includes('initialize_mint')) {
+    return { type: 'create' };
+  }
+
+  if (
+    joined.includes('Instruction: Transfer') ||
+    joined.includes('Instruction: TransferChecked')
+  ) {
+    return { type: 'transfer' };
+  }
+
+  if (
+    joined.includes(SYSTEM_PROGRAM_ID) &&
+    (joined.includes('Instruction: Transfer') || joined.includes('Instruction: CreateAccount'))
+  ) {
+    return { type: 'transfer' };
+  }
+
+  return { type: 'unknown' };
+}
 
 export class SolanaMonitor {
   private connection: Connection;
@@ -31,9 +79,8 @@ export class SolanaMonitor {
   private subscriptionId: number | null = null;
   private running = false;
 
-  private onCoinCreatedCb: ((event: NewCoinEvent) => void) | null = null;
+  private onTxCb: ((event: TxEvent) => void) | null = null;
   private onStatusChangeCb: ((status: MonitorStatus, message?: string) => void) | null = null;
-  private onTxProcessedCb: ((sig: string) => void) | null = null;
 
   constructor(connectionOrUrl: Connection | string, walletAddress: string) {
     if (typeof connectionOrUrl === 'string') {
@@ -51,16 +98,12 @@ export class SolanaMonitor {
     return this.wallet.toBase58();
   }
 
-  onCoinCreated(cb: (event: NewCoinEvent) => void): void {
-    this.onCoinCreatedCb = cb;
+  onTx(cb: (event: TxEvent) => void): void {
+    this.onTxCb = cb;
   }
 
   onStatusChange(cb: (status: MonitorStatus, message?: string) => void): void {
     this.onStatusChangeCb = cb;
-  }
-
-  onTxProcessed(cb: (sig: string) => void): void {
-    this.onTxProcessedCb = cb;
   }
 
   private emitStatus(status: MonitorStatus, message?: string): void {
@@ -76,22 +119,25 @@ export class SolanaMonitor {
       async (logs, context) => {
         if (!this.running) return;
 
-        this.onTxProcessedCb?.(logs.signature);
+        const { type, platform } = classifyTxType(logs.logs);
+        const baseEvent: TxEvent = {
+          type,
+          timestamp: new Date(),
+          txSignature: logs.signature,
+          slot: context.slot,
+          wallet: this.wallet.toBase58(),
+          platform,
+        };
 
-        const logsStr = logs.logs.join(' ');
-
-        const isTokenCreate =
-          logsStr.includes('InitializeMint') ||
-          logsStr.includes('initialize_mint') ||
-          logsStr.includes('initialize2') ||
-          this.detectLaunchpadCreate(logs.logs);
-
-        if (isTokenCreate) {
+        if (type === 'create') {
           try {
-            await this.handleNewMint(logs.signature, context.slot, logs.logs);
+            const filled = await this.enrichCreateEvent(baseEvent, logs.logs);
+            this.onTxCb?.(filled);
           } catch {
-            // retry on next matching log
+            this.onTxCb?.(baseEvent);
           }
+        } else {
+          this.onTxCb?.(baseEvent);
         }
       },
       'confirmed'
@@ -100,67 +146,25 @@ export class SolanaMonitor {
     this.emitStatus('connected');
   }
 
-  private detectLaunchpadCreate(logs: string[]): boolean {
-    let inLaunchpad = false;
-
-    for (const line of logs) {
-      for (const lp of KNOWN_LAUNCHPADS) {
-        if (line.includes(lp.id) && line.includes('invoke')) {
-          inLaunchpad = true;
-          break;
-        }
-      }
-      if (inLaunchpad) break;
-    }
-
-    if (!inLaunchpad) return false;
-
-    const createKeywords = ['create', 'tokenMint', 'launch', 'deploy'];
-    const combined = logs.join(' ').toLowerCase();
-
-    return createKeywords.some((kw) => combined.includes(kw));
-  }
-
-  private detectPlatform(logs: string[]): string | undefined {
-    for (const line of logs) {
-      for (const lp of KNOWN_LAUNCHPADS) {
-        if (line.includes(lp.id)) {
-          return lp.name;
-        }
-      }
-    }
-    return undefined;
-  }
-
-  private async handleNewMint(
-    sig: string,
-    slot: number,
+  private async enrichCreateEvent(
+    base: TxEvent,
     logs: string[]
-  ): Promise<void> {
-    const tx = await this.connection.getTransaction(sig, {
+  ): Promise<TxEvent> {
+    const tx = await this.connection.getTransaction(base.txSignature, {
       commitment: 'confirmed',
       maxSupportedTransactionVersion: 0,
     });
 
-    if (!tx) return;
+    if (!tx) return base;
 
     const mintAddress = this.extractMintAddress(tx);
-    if (!mintAddress) return;
 
-    const tokenProgram = this.detectTokenProgram(tx);
-    const platform = this.detectPlatform(logs);
-
-    const event: NewCoinEvent = {
-      timestamp: new Date(),
-      txSignature: sig,
-      mintAddress,
-      tokenProgram,
-      slot,
-      platform,
-      wallet: this.wallet.toBase58(),
+    return {
+      ...base,
+      mintAddress: mintAddress ?? undefined,
+      tokenProgram: mintAddress ? this.detectTokenProgram(tx) : undefined,
+      details: mintAddress ? `Token: ${mintAddress.slice(0, 8)}...` : undefined,
     };
-
-    this.onCoinCreatedCb?.(event);
   }
 
   private detectTokenProgram(tx: VersionedTransactionResponse): string {

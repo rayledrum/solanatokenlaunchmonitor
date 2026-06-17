@@ -8,9 +8,9 @@ function shorten(addr: string): string {
 
 function formatMarketCap(mc?: number): string {
   if (mc === undefined || mc === null) return '';
-  if (mc >= 1_000_000) return ` ${(mc / 1_000_000).toFixed(1)}M`;
-  if (mc >= 1_000) return ` ${(mc / 1_000).toFixed(1)}K`;
-  return ` ${mc.toFixed(0)}`;
+  if (mc >= 1_000_000) return `${(mc / 1_000_000).toFixed(1)}M`;
+  if (mc >= 1_000) return `${(mc / 1_000).toFixed(1)}K`;
+  return `${mc.toFixed(0)}`;
 }
 
 export class TUI {
@@ -124,8 +124,8 @@ export class TUI {
       extra = ` {white-fg}Token:{/white-fg} ${event.mintAddress}`;
     }
 
-    const mc = event.marketCap ? ` {yellow-fg}MC:$${formatMarketCap(event.marketCap)}{/yellow-fg}` : '';
-    const mcUsd = event.marketCapUsd ? ` {green-fg}$${formatMarketCap(event.marketCapUsd)}{/green-fg}` : '';
+    const mc = event.marketCap ? ` {yellow-fg}MC:${formatMarketCap(event.marketCap)} SOL{/yellow-fg}` : '';
+    const mcUsd = event.marketCapUsd ? ` {green-fg}($${formatMarketCap(event.marketCapUsd)}){/green-fg}` : '';
 
     const entry =
       `{bold}{green-fg}[${event.timestamp.toLocaleTimeString()}]{/green-fg}{/bold}` +

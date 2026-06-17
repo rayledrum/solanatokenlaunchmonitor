@@ -1,5 +1,6 @@
 import * as blessed from 'blessed';
 import { TxEvent, MonitorStatus, TxType } from './monitor';
+import { WalletEntry } from './config';
 
 const TYPE_STYLE: Record<TxType, { fg: string; label: string }> = {
   create:   { fg: 'white',    label: 'CREATE' },
@@ -20,11 +21,19 @@ export class TUI {
   private statsBox: blessed.Widgets.BoxElement;
   private counts: Record<TxType, number> = { create: 0, buy: 0, sell: 0, transfer: 0, unknown: 0 };
   private walletCount: number;
+  private nicknames: Record<string, string>;
 
-  constructor(wallets: string[]) {
-    this.walletCount = wallets.length;
+  constructor(addresses: string[], entries: WalletEntry[]) {
+    this.walletCount = addresses.length;
+    this.nicknames = {};
+    for (const e of entries) {
+      this.nicknames[e.address] = e.nickname;
+    }
 
-    const shortAddrs = wallets.map(shorten).join(', ');
+    const shortAddrs = entries
+      .map((e) => `${e.nickname} (${shorten(e.address)})`)
+      .join(', ');
+
     this.screen = blessed.screen({
       smartCSR: true,
       title: 'Solana Wallet Monitor',
@@ -32,9 +41,9 @@ export class TUI {
     });
 
     const label =
-      wallets.length === 1
+      entries.length === 1
         ? `Watching: {green-fg}${shortAddrs}{/green-fg}`
-        : `Watching {green-fg}${wallets.length} wallets{/green-fg}: ${shortAddrs}`;
+        : `Watching {green-fg}${entries.length} wallets{/green-fg}: ${shortAddrs}`;
 
     this.titleBox = blessed.box({
       parent: this.screen,
@@ -108,7 +117,8 @@ export class TUI {
 
     const style = TYPE_STYLE[event.type];
     const tag = `{${style.fg}-fg}[${style.label}]{/${style.fg}-fg}`;
-    const walletTag = ` {blue-fg}[${shorten(event.wallet)}]{/blue-fg}`;
+    const nick = this.nicknames[event.wallet] || shorten(event.wallet);
+    const walletTag = ` {blue-fg}[${nick}]{/blue-fg}`;
     const platform = event.platform ? ` {magenta-fg}[${event.platform}]{/magenta-fg}` : '';
 
     let extra = '';

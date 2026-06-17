@@ -15,6 +15,15 @@ const KNOWN_LAUNCHPADS = [
   { id: 'MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG', name: 'Moonshot' },
 ] as const;
 
+const DEX_PROGRAMS = [
+  'JUP6LkbZbjS1jKKwapdHX74xkaf3AxC2Dkrm3bEnrM',
+  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',
+  'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7gr6K8LqFD',
+  'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',
+  'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo',
+  '9W959DqEETi9e4in1q9W7bq8o9fH1g8gjP1JjZLgHnbd',
+];
+
 export type TxType = 'create' | 'buy' | 'sell' | 'transfer' | 'unknown';
 
 export interface TxEvent {
@@ -33,43 +42,60 @@ export interface TxEvent {
 
 export type MonitorStatus = 'connecting' | 'connected' | 'error' | 'disconnected';
 
+function programIdInLogs(logs: string[], id: string): boolean {
+  return logs.some((l) => l.includes(id) && l.includes('invoke'));
+}
+
+function detectPlatformInLogs(logs: string[]): string | undefined {
+  for (const line of logs) {
+    for (const lp of KNOWN_LAUNCHPADS) {
+      if (line.includes(lp.id)) return lp.name;
+    }
+  }
+  return undefined;
+}
+
 function classifyTxType(logs: string[]): { type: TxType; platform?: string } {
   const joined = logs.join(' ');
+  const lower = joined.toLowerCase();
 
+  // 1. Token creation — always a create regardless of platform
+  if (lower.includes('initializemint') || lower.includes('initialize_mint') || lower.includes('initialize2')) {
+    const platform = detectPlatformInLogs(logs);
+    return { type: 'create', platform };
+  }
+
+  // 2. Check known launchpad programs — buy/sell/create from pump.fun / Moonshot
   for (const lp of KNOWN_LAUNCHPADS) {
-    const inLaunchpad = logs.some((l) => l.includes(lp.id) && l.includes('invoke'));
-    if (!inLaunchpad) continue;
+    if (!programIdInLogs(logs, lp.id)) continue;
 
-    const lowerJoined = joined.toLowerCase();
-    if (lowerJoined.includes('initializemint') || lowerJoined.includes('initialize_mint')) {
-      return { type: 'create', platform: lp.name };
-    }
-    if (lowerJoined.includes('instruction: buy') || lowerJoined.includes('"buy"')) {
+    if (lower.includes('instruction: buy') || lower.includes('program log: buy')) {
       return { type: 'buy', platform: lp.name };
     }
-    if (lowerJoined.includes('instruction: sell') || lowerJoined.includes('"sell"')) {
+    if (lower.includes('instruction: sell') || lower.includes('program log: sell')) {
       return { type: 'sell', platform: lp.name };
     }
-    if (lowerJoined.includes('create') || lowerJoined.includes('tokenmint')) {
-      return { type: 'create', platform: lp.name };
+    if (lower.includes('create') || lower.includes('tokenmint')) {
+      const hasInitMint = lower.includes('initializemint') || lower.includes('initialize_mint');
+      return { type: hasInitMint ? 'create' : 'unknown', platform: lp.name };
+    }
+    // Launchpad involved but can't determine direction — don't fall through to transfer
+    return { type: 'unknown', platform: lp.name };
+  }
+
+  // 3. DEX swap (Jupiter, Raydium, etc.) — not a plain transfer, mark unknown
+  for (const dex of DEX_PROGRAMS) {
+    if (programIdInLogs(logs, dex)) {
+      return { type: 'unknown' };
     }
   }
 
-  if (joined.includes('InitializeMint') || joined.includes('initialize_mint')) {
-    return { type: 'create' };
-  }
-
-  if (
-    joined.includes('Instruction: Transfer') ||
-    joined.includes('Instruction: TransferChecked')
-  ) {
+  // 4. Plain Token or SOL transfer (no DEX/launchpad involved)
+  if (joined.includes('Instruction: Transfer') || joined.includes('Instruction: TransferChecked')) {
     return { type: 'transfer' };
   }
 
-  if (
-    joined.includes(SYSTEM_PROGRAM_ID) &&
-    (joined.includes('Instruction: Transfer') || joined.includes('Instruction: CreateAccount'))
-  ) {
+  if (joined.includes(SYSTEM_PROGRAM_ID) && joined.includes('Instruction: Transfer')) {
     return { type: 'transfer' };
   }
 

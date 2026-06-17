@@ -5,8 +5,9 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "npm run build && node dist/index.js",
-    "dev": "tsc && node dist/index.js"
+    "start": "npm run build && node dist/index.js wallets.json",
+    "dev": "tsc && node dist/index.js wallets.json",
+    "mon": "node dist/index.js wallets.json"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.0",

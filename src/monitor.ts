@@ -38,6 +38,8 @@ export interface TxEvent {
   tokenProgram?: string;
   platform?: string;
   details?: string;
+  marketCap?: number;
+  marketCapUsd?: number;
 }
 
 export type MonitorStatus = 'connecting' | 'connected' | 'error' | 'disconnected';
@@ -165,8 +167,6 @@ export class SolanaMonitor {
           } catch {
             this.onTxCb?.(baseEvent);
           }
-        } else {
-          this.onTxCb?.(baseEvent);
         }
       },
       'confirmed'
@@ -207,6 +207,52 @@ export class SolanaMonitor {
     }
   }
 
+  private async computeMarketCap(
+    mintAddress: string,
+    platform?: string
+  ): Promise<{ marketCap: number; marketCapUsd?: number } | null> {
+    if (platform === 'pump.fun') {
+      try {
+        const mint = new PublicKey(mintAddress);
+        const pumpProgram = new PublicKey(KNOWN_LAUNCHPADS[0].id);
+        const [curveAddr] = PublicKey.findProgramAddressSync(
+          [Buffer.from('bonding-curve'), mint.toBuffer()],
+          pumpProgram
+        );
+
+        const info = await this.connection.getAccountInfo(curveAddr);
+        if (!info || info.data.length < 82) return null;
+
+        const d = info.data;
+        const readU64 = (off: number): bigint =>
+          BigInt(d[off]) |
+          (BigInt(d[off + 1]) << 8n) |
+          (BigInt(d[off + 2]) << 16n) |
+          (BigInt(d[off + 3]) << 24n) |
+          (BigInt(d[off + 4]) << 32n) |
+          (BigInt(d[off + 5]) << 40n) |
+          (BigInt(d[off + 6]) << 48n) |
+          (BigInt(d[off + 7]) << 56n);
+
+        const virtualTokenReserves = readU64(8);
+        const virtualSolReserves = readU64(16);
+        const tokenTotalSupply = readU64(40);
+
+        if (virtualTokenReserves === 0n) return null;
+
+        const mcLamports =
+          (virtualSolReserves * tokenTotalSupply) / virtualTokenReserves;
+        const mcSol = Number(mcLamports) / 1e9;
+        const mcUsd = mcSol * 150;
+
+        return { marketCap: mcSol, marketCapUsd: mcUsd };
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
   private async enrichCreateEvent(
     base: TxEvent,
     logs: string[]
@@ -222,9 +268,10 @@ export class SolanaMonitor {
 
     if (!mintAddress) return base;
 
-    const meta = await this.fetchTokenMetadata(mintAddress);
-    const symbolStr = meta ? `${meta.symbol}` : '';
-    const nameStr = meta ? `${meta.name}` : '';
+    const [meta, mc] = await Promise.all([
+      this.fetchTokenMetadata(mintAddress),
+      this.computeMarketCap(mintAddress, base.platform),
+    ]);
 
     return {
       ...base,
@@ -233,6 +280,8 @@ export class SolanaMonitor {
       tokenSymbol: meta?.symbol,
       tokenProgram: this.detectTokenProgram(tx),
       details: meta ? `${meta.symbol}` : mintAddress.slice(0, 8) + '...',
+      marketCap: mc?.marketCap,
+      marketCapUsd: mc?.marketCapUsd,
     };
   }
 

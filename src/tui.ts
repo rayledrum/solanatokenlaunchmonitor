@@ -1,17 +1,16 @@
 import * as blessed from 'blessed';
-import { TxEvent, MonitorStatus, TxType } from './monitor';
+import { TxEvent, MonitorStatus } from './monitor';
 import { WalletEntry } from './config';
-
-const TYPE_STYLE: Record<TxType, { fg: string; label: string }> = {
-  create:   { fg: 'white',    label: 'CREATE' },
-  buy:      { fg: 'green',    label: 'BUY' },
-  sell:     { fg: 'red',      label: 'SELL' },
-  transfer: { fg: 'blue',     label: 'TRANSFER' },
-  unknown:  { fg: 'yellow',   label: 'TX' },
-};
 
 function shorten(addr: string): string {
   return addr.slice(0, 4) + '..' + addr.slice(-4);
+}
+
+function formatMarketCap(mc?: number): string {
+  if (mc === undefined || mc === null) return '';
+  if (mc >= 1_000_000) return ` ${(mc / 1_000_000).toFixed(1)}M`;
+  if (mc >= 1_000) return ` ${(mc / 1_000).toFixed(1)}K`;
+  return ` ${mc.toFixed(0)}`;
 }
 
 export class TUI {
@@ -19,7 +18,7 @@ export class TUI {
   private titleBox: blessed.Widgets.BoxElement;
   private logBox: blessed.Widgets.Log;
   private statsBox: blessed.Widgets.BoxElement;
-  private counts: Record<TxType, number> = { create: 0, buy: 0, sell: 0, transfer: 0, unknown: 0 };
+  private createCount = 0;
   private walletCount: number;
   private nicknames: Record<string, string>;
 
@@ -92,10 +91,7 @@ export class TUI {
   private formatStats(status: string): string {
     const parts = [
       `{bold}Status:{/bold} ${status}`,
-      `{green-fg}Buys:{/green-fg} ${this.counts.buy}`,
-      `{red-fg}Sells:{/red-fg} ${this.counts.sell}`,
-      `{white-fg}Creates:{/white-fg} ${this.counts.create}`,
-      `{blue-fg}Txfr:{/blue-fg} ${this.counts.transfer}`,
+      `{white-fg}Creates:{/white-fg} ${this.createCount}`,
       `Wallets: ${this.walletCount}`,
       `Press {yellow-fg}q{/yellow-fg} to quit`,
     ];
@@ -113,27 +109,32 @@ export class TUI {
   }
 
   onTx(event: TxEvent): void {
-    this.counts[event.type]++;
+    this.createCount++;
 
-    const style = TYPE_STYLE[event.type];
-    const tag = `{${style.fg}-fg}[${style.label}]{/${style.fg}-fg}`;
     const nick = this.nicknames[event.wallet] || shorten(event.wallet);
     const walletTag = ` {blue-fg}[${nick}]{/blue-fg}`;
     const platform = event.platform ? ` {magenta-fg}[${event.platform}]{/magenta-fg}` : '';
 
     let extra = '';
-    if (event.tokenSymbol) {
+    if (event.tokenSymbol && event.tokenName) {
+      extra = ` {white-fg}${event.tokenName} ($${event.tokenSymbol}){/white-fg}`;
+    } else if (event.tokenSymbol) {
       extra = ` {white-fg}$${event.tokenSymbol}{/white-fg}`;
     } else if (event.mintAddress) {
       extra = ` {white-fg}Token:{/white-fg} ${event.mintAddress}`;
     }
 
+    const mc = event.marketCap ? ` {yellow-fg}MC:$${formatMarketCap(event.marketCap)}{/yellow-fg}` : '';
+    const mcUsd = event.marketCapUsd ? ` {green-fg}$${formatMarketCap(event.marketCapUsd)}{/green-fg}` : '';
+
     const entry =
       `{bold}{green-fg}[${event.timestamp.toLocaleTimeString()}]{/green-fg}{/bold}` +
       walletTag +
-      ` ${tag}` +
+      ` {white-fg}[CREATE]{/white-fg}` +
       platform +
-      extra;
+      extra +
+      mc +
+      mcUsd;
 
     this.logBox.add(entry);
     this.logBox.setScrollPerc(100);

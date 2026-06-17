@@ -165,9 +165,6 @@ export class SolanaMonitor {
           } catch {
             this.onTxCb?.(baseEvent);
           }
-        } else if (type === 'unknown') {
-          const filled = await this.enrichUnknownEvent(baseEvent).catch(() => baseEvent);
-          this.onTxCb?.(filled);
         } else {
           this.onTxCb?.(baseEvent);
         }
@@ -326,80 +323,6 @@ export class SolanaMonitor {
     }
 
     return null;
-  }
-
-  private async enrichUnknownEvent(base: TxEvent): Promise<TxEvent> {
-    const tx = await this.connection.getTransaction(base.txSignature, {
-      commitment: 'confirmed',
-      maxSupportedTransactionVersion: 0,
-    });
-    if (!tx) return base;
-    return this.classifyFromBalances(base, tx);
-  }
-
-  private classifyFromBalances(base: TxEvent, tx: VersionedTransactionResponse): TxEvent {
-    const meta = tx.meta;
-    if (!meta) return base;
-
-    const walletStr = this.wallet.toBase58();
-    const msg = tx.transaction.message;
-    const accountKeys = msg.getAccountKeys();
-    const SOL_THRESHOLD = 0.0001;
-
-    let walletIdx = -1;
-    for (let i = 0; i < accountKeys.staticAccountKeys.length; i++) {
-      if (accountKeys.staticAccountKeys[i].toBase58() === walletStr) {
-        walletIdx = i;
-        break;
-      }
-    }
-    if (walletIdx === -1) return base;
-
-    const preSol = meta.preBalances[walletIdx] / 1e9;
-    const postSol = meta.postBalances[walletIdx] / 1e9;
-    const solChange = postSol - preSol;
-
-    type TokenDelta = { mint: string; pre: number; post: number };
-    const tokenDeltas: TokenDelta[] = [];
-    const preByAcct: Map<number, { mint: string; amount: number }> = new Map();
-
-    for (const tb of meta.preTokenBalances || []) {
-      if (tb.owner === walletStr) {
-        preByAcct.set(tb.accountIndex, { mint: tb.mint, amount: tb.uiTokenAmount.uiAmount ?? 0 });
-      }
-    }
-
-    for (const tb of meta.postTokenBalances || []) {
-      if (tb.owner !== walletStr) continue;
-      const pre = preByAcct.get(tb.accountIndex);
-      const preAmt = pre ? pre.amount : 0;
-      const postAmt = tb.uiTokenAmount.uiAmount ?? 0;
-      if (postAmt !== preAmt) {
-        tokenDeltas.push({ mint: tb.mint, pre: preAmt, post: postAmt });
-      }
-      preByAcct.delete(tb.accountIndex);
-    }
-
-    for (const [_, pre] of preByAcct) {
-      tokenDeltas.push({ mint: pre.mint, pre: pre.amount, post: 0 });
-    }
-
-    const realDeltas = tokenDeltas.filter((d) => d.mint !== WSOL_MINT);
-    const netTokenDelta = realDeltas.reduce((s, d) => s + (d.post - d.pre), 0);
-
-    if (solChange < -SOL_THRESHOLD && netTokenDelta > 0) {
-      const mint = realDeltas.find((d) => d.post > d.pre)?.mint;
-      return { ...base, type: 'buy', mintAddress: mint };
-    }
-    if (solChange > SOL_THRESHOLD && netTokenDelta < 0) {
-      const mint = realDeltas.find((d) => d.post < d.pre)?.mint;
-      return { ...base, type: 'sell', mintAddress: mint };
-    }
-    if (realDeltas.length > 0 || Math.abs(solChange) > SOL_THRESHOLD) {
-      return { ...base, type: 'transfer' };
-    }
-
-    return base;
   }
 
   async stop(): Promise<void> {

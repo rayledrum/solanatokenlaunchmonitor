@@ -1,0 +1,20 @@
+{
+  "name": "solana-wallet-monitor",
+  "version": "1.0.0",
+  "description": "Real-time Solana wallet monitor for new coin creation detection",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "npm run build && node dist/index.js",
+    "dev": "tsc && node dist/index.js"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.0",
+    "blessed": "^0.1.81"
+  },
+  "devDependencies": {
+    "@types/blessed": "^0.1.25",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
